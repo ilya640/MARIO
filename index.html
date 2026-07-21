@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, touch-action: manipulation">
+    <title>Super Mario Web</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #000;
+            touch-action: manipulation;
+        }
+        
+        #gameCanvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #5c94fc;
+        }
+        
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            flex-direction: column;
+            text-align: center;
+            z-index: 10;
+            font-size: clamp(1.2rem, 4vw, 2rem);
+        }
+        
+        .overlay.hidden {
+            display: none;
+        }
+        
+        button {
+            margin-top: 20px;
+            padding: 0.8em 2em;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 8px;
+            background: #e52521;
+            color: white;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #c41e1a;
+        }
+        
+        #loadingScreen {
+            z-index: 20;
+        }
+        
+        .progress-bar {
+            width: 80%;
+            max-width: 400px;
+            height: 30px;
+            background: #555;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: #f5d742;
+            transition: width 0.1s linear;
+        }
+        
+        .save-msg {
+            font-size: 1rem;
+            margin-top: 10px;
+            opacity: 0.8;
+        }
+        
+        #mobileControls {
+            position: absolute;
+            bottom: 20px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 0 15px;
+            z-index: 15;
+            pointer-events: none;
+        }
+        
+        .ctrl-group {
+            display: flex;
+            gap: 12px;
+            pointer-events: auto;
+        }
+        
+        .ctrl-btn {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.25);
+            backdrop-filter: blur(6px);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            color: white;
+            user-select: none;
+            touch-action: manipulation;
+            transition: background 0.1s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        .ctrl-btn:active,
+        .ctrl-btn.pressed {
+            background: rgba(255, 255, 255, 0.5);
+            border-color: white;
+            transform: scale(0.95);
+        }
+        
+        #jumpBtn {
+            width: 90px;
+            height: 90px;
+            font-size: 42px;
+            background: rgba(229, 37, 33, 0.35);
+            border-color: rgba(229, 37, 33, 0.6);
+        }
+        
+        #jumpBtn:active,
+        #jumpBtn.pressed {
+            background: rgba(229, 37, 33, 0.7);
+        }
+        
+        @media (pointer: fine) {
+            #mobileControls {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loadingScreen" class="overlay">
+        <h2>Загрузка ресурсов...</h2>
+        <div class="progress-bar">
+            <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <p id="progressText">0%</p>
+    </div>
+    <div id="menuScreen" class="overlay hidden">
+        <h1>Super Mario Web</h1>
+        <p>Стрелки / касания — движение, пробел / тап — прыжок (двойной прыжок!)</p>
+        <button id="startBtn">Играть</button>
+    </div>
+    <div id="gameOverScreen" class="overlay hidden">
+        <h2>Игра окончена</h2>
+        <p>Ваш счёт: <span id="finalScore">0</span></p>
+        <p id="saveStatus" class="save-msg"></p>
+        <button id="restartBtn">Заново</button>
+    </div>
+    <div id="winScreen" class="overlay hidden">
+        <h2>Поздравляем!</h2>
+        <p>Вы спасли принцессу! Счёт: <span id="winScore">0</span></p>
+        <p id="winSaveStatus" class="save-msg"></p>
+        <button id="winRestartBtn">Играть снова</button>
+    </div>
+
+    <div id="mobileControls" class="hidden">
+        <div class="ctrl-group" id="leftGroup">
+            <div class="ctrl-btn" id="leftBtn">◀</div>
+            <div class="ctrl-btn" id="rightBtn">▶</div>
+        </div>
+        <div class="ctrl-group" id="jumpGroup">
+            <div class="ctrl-btn" id="jumpBtn">▲</div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        (function() {
+            class SoundManager {
+                constructor() {
+                    this.ctx = null;
+                    try {
+                        this.ctx = new(window.AudioContext || window.webkitAudioContext)();
+                    } catch (e) {}
+                    this.musicPlaying = false;
+                }
+                playTone(freq, duration, type = 'square', volume = 0.3, startTime = 0) {
+                    if (!this.ctx) return;
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = type;
+                    osc.frequency.value = freq;
+                    gain.gain.setValueAtTime(volume, this.ctx.currentTime + startTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + startTime + duration);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(this.ctx.currentTime + startTime);
+                    osc.stop(this.ctx.currentTime + startTime + duration);
+                }
+                jump() {
+                    this.playTone(400, 0.15, 'square', 0.2);
+                }
+                coin() {
+                    this.playTone(988, 0.1, 'square', 0.3);
+                    this.playTone(1319, 0.15, 'square', 0.2);
+                }
+                die() {
+                    this.playTone(200, 0.4, 'sawtooth', 0.3);
+                }
+                kill() {
+                    this.playTone(600, 0.1, 'square', 0.2);
+                }
+                win() {
+                    this.playTone(523, 0.15);
+                    this.playTone(659, 0.15);
+                    this.playTone(784, 0.3, 'square', 0.4);
+                }
+                startMusic() {
+                    if (!this.ctx || this.musicPlaying) return;
+                    this.musicPlaying = true;
+                    const notes = [262, 294, 330, 349, 392, 349, 330, 294];
+                    const noteLen = 0.25;
+                    let time = 0;
+                    const loop = () => {
+                        if (!this.musicPlaying) return;
+                        for (let i = 0; i < notes.length; i++) {
+                            this.playTone(notes[i], noteLen * 0.8, 'triangle', 0.08, time);
+                            time += noteLen;
+                        }
+                        setTimeout(loop, time * 1000 + 50);
+                    };
+                    loop();
+                }
+                stopMusic() {
+                    this.musicPlaying = false;
+                }
+            }
+
+            class Particle {
+                constructor(x, y, vx, vy, color, life = 30) {
+                    this.x = x;
+                    this.y = y;
+                    this.vx = vx;
+                    this.vy = vy;
+                    this.color = color;
+                    this.life = life;
+                    this.maxLife = life;
+                }
+                update() {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.life--;
+                }
+                draw(ctx) {
+                    const alpha = this.life / this.maxLife;
+                    ctx.fillStyle = this.color.replace('1)', `${alpha})`).replace('rgb', 'rgba');
+                    ctx.fillRect(this.x, this.y, 4, 4);
+                }
+                get dead() {
+                    return this.life <= 0;
+                }
+            }
+
+            class GameObject {
+                constructor(x, y, w, h, solid = true) {
+                    this.x = x;
+                    this.y = y;
+                    this.w = w;
+                    this.h = h;
+                    this.solid = solid;
+                }
+            }
+
+            class FlyingCoin {
+                constructor(x, y) {
+                    this.x = x;
+                    this.y = y;
+                    this.vy = -5;
+                    this.life = 20;
+                    this.collected = false;
+                }
+                update() {
+                    this.y += this.vy;
+                    this.vy += 0.4;
+                    this.life--;
+                    if (this.life <= 0) this.collected = true;
+                }
+                draw(ctx) {
+                    ctx.fillStyle = '#FFD700';
+                    ctx.fillRect(this.x - 8, this.y - 8, 16, 16);
+                    ctx.strokeStyle = '#B8860B';
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(this.x - 8, this.y - 8, 16, 16);
+                }
+            }
+
+            class Player extends GameObject {
+                constructor(x, y) {
+                    super(x, y, 28, 40, true);
+                    this.vx = this.vy = 0;
+                    this.onGround = false;
+                    this.jumpPower = -8.5;
+                    this.gravity = 0.55;
+                    this.canDoubleJump = false;
+                    this.hasDoubleJumped = false;
+                    this.facing = 1;
+                    this.walkFrame = 0;
+                    this.walkTimer = 0;
+                }
+                jump() {
+                    if (this.onGround) {
+                        this.vy = this.jumpPower;
+                        this.onGround = false;
+                        this.canDoubleJump = true;
+                        this.hasDoubleJumped = false;
+                    } else if (this.canDoubleJump && !this.hasDoubleJumped) {
+                        this.vy = this.jumpPower * 0.8;
+                        this.hasDoubleJumped = true;
+                        this.canDoubleJump = false;
+                    }
+                }
+                update(solidObjects) {
+                    this.vy += this.gravity;
+                    if (this.vy > 15) this.vy = 15;
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.onGround = false;
+
+                    for (let obj of solidObjects) {
+                        if (this.x + this.w > obj.x && this.x < obj.x + obj.w &&
+                            this.y + this.h > obj.y && this.y < obj.y + obj.h) {
+                            let overlapLeft = (this.x + this.w) - obj.x;
+                            let overlapRight = (obj.x + obj.w) - this.x;
+                            let overlapTop = (this.y + this.h) - obj.y;
+                            let overlapBottom = (obj.y + obj.h) - this.y;
+                            let minX = Math.min(overlapLeft, overlapRight);
+                            let minY = Math.min(overlapTop, overlapBottom);
+
+                            if (minX < minY) {
+                                if (overlapLeft < overlapRight) this.x = obj.x - this.w;
+                                else this.x = obj.x + obj.w;
+                                this.vx = 0;
+                            } else {
+                                if (overlapTop < overlapBottom) {
+                                    this.y = obj.y - this.h;
+                                    this.vy = 0;
+                                    this.onGround = true;
+                                } else {
+                                    if (this.vy < 0 && obj instanceof QuestionBlock && obj.active) {
+                                        this.vy = 2;
+                                        this.y = obj.y + obj.h;
+                                        return {
+                                            blockHit: obj
+                                        };
+                                    } else {
+                                        this.y = obj.y + obj.h;
+                                        this.vy = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (this.x < 0) {
+                        this.x = 0;
+                        this.vx = 0;
+                    }
+                    if (this.x + this.w > 3200) {
+                        this.x = 3200 - this.w;
+                    }
+                    if (this.y > 600) {
+                        this.y = 600;
+                        this.vy = 0;
+                        this.onGround = true;
+                    }
+
+                    if (this.onGround && Math.abs(this.vx) > 0) {
+                        this.walkTimer++;
+                        if (this.walkTimer > 6) {
+                            this.walkFrame = 1 - this.walkFrame;
+                            this.walkTimer = 0;
+                        }
+                    } else if (this.onGround) this.walkFrame = 0;
+                    if (this.vx > 0) this.facing = 1;
+                    else if (this.vx < 0) this.facing = -1;
+                    return null;
+                }
+                draw(ctx) {
+                    const {
+                        x,
+                        y,
+                        w,
+                        h
+                    } = this;
+                    ctx.save();
+                    ctx.translate(x + w / 2, y + h / 2);
+                    ctx.scale(this.facing, 1);
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.fillRect(-10, h / 2 - 4, 20, 4);
+                    ctx.fillStyle = '#5C3A21';
+                    ctx.fillRect(-11, h / 2 - 7, 10, 7);
+                    ctx.fillRect(1, h / 2 - 7, 10, 7);
+                    ctx.fillStyle = '#3A2111';
+                    ctx.fillRect(-8, h / 2 - 3, 8, 3);
+                    ctx.fillRect(4, h / 2 - 3, 8, 3);
+                    ctx.fillStyle = '#1E90FF';
+                    ctx.fillRect(-9, h / 2 - 15, 8, 8);
+                    ctx.fillRect(1, h / 2 - 15, 8, 8);
+                    ctx.fillStyle = '#E52521';
+                    ctx.fillRect(-w / 2, -h / 2 + 8, w, 14);
+                    ctx.fillStyle = '#1E90FF';
+                    ctx.fillRect(-w / 2, -h / 2 + 22, w, 18);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.beginPath();
+                    ctx.arc(0, -h / 2 + 26, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(0, -h / 2 + 32, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#DAA520';
+                    ctx.beginPath();
+                    ctx.arc(0, -h / 2 + 26, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(0, -h / 2 + 32, 1.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(-w / 2 - 2, -h / 2 + 18, 4, 8);
+                    ctx.fillRect(w / 2 - 2, -h / 2 + 18, 4, 8);
+                    ctx.fillStyle = '#FFDAB9';
+                    ctx.beginPath();
+                    ctx.ellipse(0, -h / 2 + 12, 9, 11, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = '#E52521';
+                    ctx.fillRect(-11, -h / 2, 22, 8);
+                    ctx.fillRect(-10, -h / 2 - 3, 20, 5);
+                    ctx.fillRect(4, -h / 2 + 3, 8, 4);
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fillRect(-11, -h / 2 + 7, 22, 3);
+                    ctx.font = 'bold 8px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('M', 0, -h / 2 + 6);
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(-6, -h / 2 + 9, 5, 5);
+                    ctx.fillRect(1, -h / 2 + 9, 5, 5);
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(-4, -h / 2 + 10, 3, 3);
+                    ctx.fillRect(3, -h / 2 + 10, 3, 3);
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(-3, -h / 2 + 10, 1, 1);
+                    ctx.fillRect(4, -h / 2 + 10, 1, 1);
+                    ctx.strokeStyle = '#6B3A2A';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(-6, -h / 2 + 16);
+                    ctx.lineTo(-2, -h / 2 + 18);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(6, -h / 2 + 16);
+                    ctx.lineTo(2, -h / 2 + 18);
+                    ctx.stroke();
+                    ctx.strokeStyle = '#000';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.arc(0, -h / 2 + 18, 3, 0.1, Math.PI - 0.1);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+
+            class Enemy extends GameObject {
+                constructor(x, y) {
+                    super(x, y, 28, 28, true);
+                    this.vx = -1;
+                    this.vy = 0;
+                    this.gravity = 0.4;
+                    this.alive = true;
+                    this.walkFrame = 0;
+                    this.walkTimer = 0;
+                    this.onGround = false;
+                }
+                update(solidObjects) {
+                    this.vy += this.gravity;
+                    if (this.vy > 10) this.vy = 10;
+                    this.y += this.vy;
+                    this.x += this.vx;
+
+                    this.onGround = false;
+                    for (let obj of solidObjects) {
+                        if (this.x + this.w > obj.x && this.x < obj.x + obj.w &&
+                            this.y + this.h > obj.y && this.y < obj.y + obj.h) {
+                            if (this.vy > 0 && this.y + this.h - this.vy <= obj.y) {
+                                this.y = obj.y - this.h;
+                                this.vy = 0;
+                                this.onGround = true;
+                            } else if (this.vy < 0 && this.y - this.vy >= obj.y + obj.h) {
+                                this.y = obj.y + obj.h;
+                                this.vy = 0;
+                            }
+                            if (this.x + this.w > obj.x && this.x < obj.x + obj.w &&
+                                this.y + this.h > obj.y && this.y < obj.y + obj.h) {
+                                if (this.vx > 0) this.x = obj.x - this.w;
+                                else if (this.vx < 0) this.x = obj.x + obj.w;
+                                this.vx *= -1;
+                            }
+                        }
+                    }
+
+                    if (this.onGround) {
+                        let groundBelow = false;
+                        let checkX = this.vx > 0 ? this.x + this.w : this.x;
+                        for (let obj of solidObjects) {
+                            if (checkX >= obj.x && checkX <= obj.x + obj.w &&
+                                this.y + this.h >= obj.y - 2 && this.y + this.h <= obj.y + 2) {
+                                groundBelow = true;
+                                break;
+                            }
+                        }
+                        if (!groundBelow) this.vx *= -1;
+                    }
+
+                    if (this.x <= 0 || this.x + this.w >= 3200) this.vx *= -1;
+
+                    this.walkTimer++;
+                    if (this.walkTimer > 8) {
+                        this.walkFrame = 1 - this.walkFrame;
+                        this.walkTimer = 0;
+                    }
+                }
+                draw(ctx) {
+                    if (!this.alive) return;
+                    const {
+                        x,
+                        y,
+                        w,
+                        h
+                    } = this;
+                    ctx.fillStyle = '#8B4513';
+                    ctx.fillRect(x, y, w, h - 4);
+                    ctx.fillStyle = '#FFF';
+                    ctx.fillRect(x + 5, y + 5, 6, 6);
+                    ctx.fillRect(x + 17, y + 5, 6, 6);
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(x + 7, y + 7, 3, 3);
+                    ctx.fillRect(x + 19, y + 7, 3, 3);
+                    ctx.fillStyle = '#8B4513';
+                    if (this.walkFrame === 0) {
+                        ctx.fillRect(x + 4, y + h - 4, 8, 4);
+                        ctx.fillRect(x + 16, y + h - 4, 8, 4);
+                    } else {
+                        ctx.fillRect(x + 2, y + h - 4, 8, 4);
+                        ctx.fillRect(x + 18, y + h - 4, 8, 4);
+                    }
+                }
+            }
+
+            class Coin extends GameObject {
+                constructor(x, y) {
+                    super(x, y, 18, 18, false);
+                    this.collected = false;
+                    this.animPhase = Math.random() * Math.PI * 2;
+                }
+                update() {
+                    this.animPhase += 0.12;
+                }
+                draw(ctx) {
+                    if (this.collected) return;
+                    const scaleX = Math.abs(Math.cos(this.animPhase));
+                    ctx.save();
+                    ctx.translate(this.x + this.w / 2, this.y + this.h / 2);
+                    ctx.scale(scaleX, 1);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.fillRect(-this.w / 2, -this.h / 2, this.w, this.h);
+                    ctx.strokeStyle = '#B8860B';
+                    ctx.lineWidth = 1.5;
+                    ctx.strokeRect(-this.w / 2, -this.h / 2, this.w, this.h);
+                    ctx.restore();
+                }
+            }
+
+            class QuestionBlock extends GameObject {
+                constructor(x, y) {
+                    super(x, y, 32, 32, true);
+                    this.active = true;
+                    this.bounceTimer = 0;
+                }
+                hit() {
+                    if (!this.active) return null;
+                    this.active = false;
+                    this.bounceTimer = 8;
+                    return {
+                        x: this.x + this.w / 2,
+                        y: this.y
+                    };
+                }
+                update() {
+                    if (this.bounceTimer > 0) this.bounceTimer--;
+                }
+                draw(ctx) {
+                    const bounceOffset = this.bounceTimer > 0 ? -Math.sin(this.bounceTimer / 8 * Math.PI) * 6 : 0;
+                    ctx.save();
+                    ctx.translate(0, bounceOffset);
+                    if (this.active) {
+                        ctx.fillStyle = '#F5A623';
+                        ctx.fillRect(this.x, this.y, this.w, this.h);
+                        ctx.strokeStyle = '#8B6914';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(this.x, this.y, this.w, this.h);
+                        ctx.fillStyle = 'white';
+                        ctx.font = 'bold 20px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('?', this.x + this.w / 2, this.y + this.h / 2 + 7);
+                    } else {
+                        ctx.fillStyle = '#8B4513';
+                        ctx.fillRect(this.x, this.y, this.w, this.h);
+                        ctx.strokeStyle = '#5C3317';
+                        ctx.lineWidth = 2;
+                        ctx.strokeRect(this.x, this.y, this.w, this.h);
+                    }
+                    ctx.restore();
+                }
+            }
+
+            class Flag extends GameObject {
+                constructor(x, y) {
+                    super(x, y, 20, 60, false);
+                }
+                draw(ctx) {
+                    ctx.fillStyle = '#8B4513';
+                    ctx.fillRect(this.x, this.y, 4, this.h);
+                    ctx.fillStyle = '#00FF00';
+                    ctx.beginPath();
+                    ctx.moveTo(this.x + 4, this.y);
+                    ctx.lineTo(this.x + 20, this.y + 10);
+                    ctx.lineTo(this.x + 4, this.y + 20);
+                    ctx.fill();
+                }
+            }
+
+            class ParallaxBackground {
+                constructor() {
+                    this.cloudOffset = 0;
+                    this.hillOffset = 0;
+                }
+                update(cameraX) {
+                    this.cloudOffset = cameraX * 0.1;
+                    this.hillOffset = cameraX * 0.3;
+                }
+                draw(ctx, w, h) {
+                    ctx.fillStyle = '#5c94fc';
+                    ctx.fillRect(0, 0, w, h);
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    for (let i = 0; i < 10; i++) {
+                        let x = ((i * 350) - this.cloudOffset) % 3500;
+                        ctx.beginPath();
+                        ctx.ellipse(x, 70, 50, 25, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.fillStyle = '#228B22';
+                    for (let i = 0; i < 12; i++) {
+                        let x = (i * 300) - this.hillOffset % 3600;
+                        ctx.beginPath();
+                        ctx.moveTo(x, h);
+                        ctx.quadraticCurveTo(x + 80, h - 100, x + 160, h);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            class MarioGame {
+                constructor(canvasId) {
+                    this.canvas = document.getElementById(canvasId);
+                    this.ctx = this.canvas.getContext('2d');
+                    this.background = new ParallaxBackground();
+                    this.sound = new SoundManager();
+                    this.state = 'menu';
+                    this.particles = [];
+                    this.flyingCoins = [];
+                    this.solidObjects = [];
+                    this.questionBlocks = [];
+                    this.resize();
+                    window.addEventListener('resize', () => this.resize());
+                    this.keys = {};
+                    window.addEventListener('keydown', e => this.keys[e.key] = true);
+                    window.addEventListener('keyup', e => this.keys[e.key] = false);
+                    window.addEventListener('popstate', e => this.onPopState(e));
+                    window.addEventListener('beforeunload', e => this.onBeforeUnload(e));
+                    this.ui = {
+                        menu: document.getElementById('menuScreen'),
+                        gameOver: document.getElementById('gameOverScreen'),
+                        win: document.getElementById('winScreen'),
+                        loading: document.getElementById('loadingScreen'),
+                        mobileControls: document.getElementById('mobileControls')
+                    };
+                    document.getElementById('startBtn').addEventListener('click', () => this.startGame());
+                    document.getElementById('restartBtn').addEventListener('click', () => this.restartGame());
+                    document.getElementById('winRestartBtn').addEventListener('click', () => this.restartGame());
+                    this.gestureHandler = null;
+                    this.initMobileControls();
+                }
+
+                resize() {
+                    this.canvas.width = window.innerWidth;
+                    this.canvas.height = window.innerHeight;
+                }
+
+                initMobileControls() {
+                    const leftBtn = document.getElementById('leftBtn');
+                    const rightBtn = document.getElementById('rightBtn');
+                    const jumpBtn = document.getElementById('jumpBtn');
+
+                    const preventDefault = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    };
+
+                    leftBtn.addEventListener('touchstart', (e) => {
+                        preventDefault(e);
+                        this.keys['ArrowLeft'] = true;
+                        leftBtn.classList.add('pressed');
+                    });
+                    leftBtn.addEventListener('touchend', (e) => {
+                        preventDefault(e);
+                        this.keys['ArrowLeft'] = false;
+                        leftBtn.classList.remove('pressed');
+                    });
+                    leftBtn.addEventListener('touchcancel', (e) => {
+                        this.keys['ArrowLeft'] = false;
+                        leftBtn.classList.remove('pressed');
+                    });
+
+                    rightBtn.addEventListener('touchstart', (e) => {
+                        preventDefault(e);
+                        this.keys['ArrowRight'] = true;
+                        rightBtn.classList.add('pressed');
+                    });
+                    rightBtn.addEventListener('touchend', (e) => {
+                        preventDefault(e);
+                        this.keys['ArrowRight'] = false;
+                        rightBtn.classList.remove('pressed');
+                    });
+                    rightBtn.addEventListener('touchcancel', (e) => {
+                        this.keys['ArrowRight'] = false;
+                        rightBtn.classList.remove('pressed');
+                    });
+
+                    jumpBtn.addEventListener('touchstart', (e) => {
+                        preventDefault(e);
+                        this.keys['Space'] = true;
+                        jumpBtn.classList.add('pressed');
+                    });
+                    jumpBtn.addEventListener('touchend', (e) => {
+                        preventDefault(e);
+                        this.keys['Space'] = false;
+                        jumpBtn.classList.remove('pressed');
+                    });
+                    jumpBtn.addEventListener('touchcancel', (e) => {
+                        this.keys['Space'] = false;
+                        jumpBtn.classList.remove('pressed');
+                    });
+                }
+
+                loadAssets() {
+                    return new Promise(resolve => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('GET', 'https://dummyimage.com/5000x5000/000/fff?text=Loading', true);
+                        xhr.responseType = 'blob';
+                        xhr.timeout = 8000;
+                        xhr.onprogress = e => {
+                            if (e.lengthComputable) {
+                                const pct = Math.round((e.loaded / e.total) * 100);
+                                document.getElementById('progressFill').style.width = pct + '%';
+                                document.getElementById('progressText').textContent = pct + '%';
+                            }
+                        };
+                        xhr.onload = () => {
+                            document.getElementById('progressFill').style.width = '100%';
+                            document.getElementById('progressText').textContent = '100%';
+                            setTimeout(() => {
+                                this.ui.loading.classList.add('hidden');
+                                resolve();
+                            }, 400);
+                        };
+                        xhr.ontimeout = xhr.onerror = () => {
+                            this.ui.loading.classList.add('hidden');
+                            resolve();
+                        };
+                        xhr.send();
+                    });
+                }
+
+                pushState(s) {
+                    history.pushState({
+                        state: s
+                    }, '', s === 'playing' ? '/game' : s === 'gameover' ? '/gameover' : s === 'win' ? '/win' : '/');
+                }
+                onPopState(e) {
+                    if (e.state && e.state.state) {
+                        if (e.state.state === 'menu') this.showMenu();
+                        else if (e.state.state === 'playing') this.startGame(false);
+                        else if (e.state.state === 'gameover') this.showGameOver();
+                        else if (e.state.state === 'win') this.showWin();
+                    } else this.showMenu();
+                }
+                onBeforeUnload(e) {
+                    if (this.state === 'playing') {
+                        e.preventDefault();
+                        e.returnValue = 'Вы уверены? Прогресс будет потерян.';
+                        return e.returnValue;
+                    }
+                }
+
+                showMenu() {
+                    this.state = 'menu';
+                    this.ui.menu.classList.remove('hidden');
+                    this.ui.gameOver.classList.add('hidden');
+                    this.ui.win.classList.add('hidden');
+                    this.canvas.style.display = 'none';
+                    if (this.animId) cancelAnimationFrame(this.animId);
+                    if (!window.history.state || window.history.state.state !== 'menu')
+                        history.replaceState({
+                            state: 'menu'
+                        }, '', '/');
+                }
+                startGame(push = true) {
+                    this.state = 'playing';
+                    this.ui.menu.classList.add('hidden');
+                    this.ui.gameOver.classList.add('hidden');
+                    this.ui.win.classList.add('hidden');
+                    this.canvas.style.display = 'block';
+                    this.initLevel();
+                    if (push) this.pushState('playing');
+                    if (this.animId) cancelAnimationFrame(this.animId);
+                    this.sound.startMusic();
+                    this.ui.mobileControls.classList.remove('hidden');
+                    this.gameLoop();
+                }
+                showGameOver() {
+                    this.state = 'gameover';
+                    this.ui.gameOver.classList.remove('hidden');
+                    this.ui.mobileControls.classList.add('hidden');
+                    document.getElementById('finalScore').textContent = this.score;
+                    this.saveScoreAjax(this.score, 'saveStatus');
+                    if (!window.history.state || window.history.state.state !== 'gameover')
+                        this.pushState('gameover');
+                    if (this.animId) cancelAnimationFrame(this.animId);
+                    this.sound.stopMusic();
+                    this.draw();
+                }
+                showWin() {
+                    this.state = 'win';
+                    this.ui.win.classList.remove('hidden');
+                    this.ui.mobileControls.classList.add('hidden');
+                    document.getElementById('winScore').textContent = this.score;
+                    this.saveScoreAjax(this.score, 'winSaveStatus');
+                    if (!window.history.state || window.history.state.state !== 'win')
+                        this.pushState('win');
+                    if (this.animId) cancelAnimationFrame(this.animId);
+                    this.sound.stopMusic();
+                    this.sound.win();
+                    this.draw();
+                }
+                restartGame() {
+                    this.startGame(true);
+                }
+
+                saveScoreAjax(score, elementId) {
+                    const el = document.getElementById(elementId);
+                    el.textContent = 'Сохранение...';
+                    fetch('https://jsonplaceholder.typicode.com/posts', {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                title: 'Mario Score',
+                                body: `Score:${score}`,
+                                userId: 1
+                            }),
+                            headers: {
+                                'Content-type': 'application/json; charset=UTF-8'
+                            }
+                        })
+                        .then(r => r.json()).then(() => el.textContent = 'Результат сохранён')
+                        .catch(() => el.textContent = 'Офлайн-режим');
+                }
+
+                createBrickPlatform(startX, y, count, questionIndices = []) {
+                    for (let i = 0; i < count; i++) {
+                        const x = startX + i * 32;
+                        if (questionIndices.includes(i)) {
+                            const qb = new QuestionBlock(x, y);
+                            this.questionBlocks.push(qb);
+                            this.solidObjects.push(qb);
+                        } else {
+                            this.solidObjects.push(new GameObject(x, y, 32, 32, true));
+                        }
+                    }
+                }
+
+                initLevel() {
+                    this.score = 0;
+                    this.player = new Player(100, 450);
+                    this.solidObjects = [];
+                    this.questionBlocks = [];
+                    this.solidObjects.push(new GameObject(0, 570, 3200, 30, true));
+                    this.createBrickPlatform(250, 478, 7, [2, 5]);
+                    this.createBrickPlatform(550, 448, 5, [1, 3]);
+                    this.createBrickPlatform(850, 428, 8, [0, 4, 7]);
+                    this.createBrickPlatform(1200, 458, 6, [2]);
+                    this.createBrickPlatform(1600, 418, 5, [1]);
+                    this.createBrickPlatform(2000, 438, 7, [3, 6]);
+                    this.createBrickPlatform(2400, 468, 6, [0, 5]);
+                    this.enemies = [
+                        new Enemy(400, 570 - 28), new Enemy(900, 570 - 28),
+                        new Enemy(1400, 570 - 28), new Enemy(1800, 570 - 28),
+                        new Enemy(2200, 570 - 28), new Enemy(2600, 570 - 28),
+                        new Enemy(350, 478 - 28), new Enemy(650, 448 - 28),
+                        new Enemy(950, 428 - 28), new Enemy(1250, 458 - 28),
+                        new Enemy(1650, 418 - 28), new Enemy(2050, 438 - 28),
+                        new Enemy(2450, 468 - 28)
+                    ];
+                    this.coins = [
+                        new Coin(280, 440), new Coin(350, 440), new Coin(420, 440),
+                        new Coin(580, 410), new Coin(650, 410),
+                        new Coin(880, 390), new Coin(950, 390),
+                        new Coin(1230, 420), new Coin(1300, 420),
+                        new Coin(1630, 380), new Coin(1700, 380),
+                        new Coin(2030, 400), new Coin(2100, 400),
+                        new Coin(2430, 430), new Coin(2500, 430)
+                    ];
+                    this.flag = new Flag(3100, 570 - 60);
+                    this.flyingCoins = [];
+                    this.particles = [];
+                    this.cameraX = 0;
+                    if (!this.gestureHandler) this.gestureHandler = new GestureHandler(this.canvas, this.player);
+                    else this.gestureHandler.player = this.player;
+                }
+
+                gameLoop() {
+                    if (this.state !== 'playing') return;
+                    this.update();
+                    this.draw();
+                    this.animId = requestAnimationFrame(() => this.gameLoop());
+                }
+
+                update() {
+                    if (this.keys['ArrowRight'] || this.keys['KeyD']) this.player.vx = 4;
+                    else if (this.keys['ArrowLeft'] || this.keys['KeyA']) this.player.vx = -4;
+                    else if (!this.gestureHandler || !this.gestureHandler.isTouching) this.player.vx = 0;
+                    if ((this.keys['Space'] || this.keys['ArrowUp'] || this.keys['KeyW']) && !this.keys._jumpLock) {
+                        this.player.jump();
+                        this.sound.jump();
+                        this.keys._jumpLock = true;
+                    }
+                    if (!(this.keys['Space'] || this.keys['ArrowUp'] || this.keys['KeyW'])) this.keys._jumpLock = false;
+
+                    const hitResult = this.player.update(this.solidObjects);
+                    if (hitResult && hitResult.blockHit) {
+                        const block = hitResult.blockHit;
+                        const coinPos = block.hit();
+                        if (coinPos) {
+                            this.score += 200;
+                            this.sound.coin();
+                            if (navigator.vibrate) navigator.vibrate(30);
+                            this.flyingCoins.push(new FlyingCoin(coinPos.x, coinPos.y));
+                            for (let i = 0; i < 5; i++) {
+                                this.particles.push(new Particle(coinPos.x, coinPos.y,
+                                    (Math.random() - 0.5) * 3, -Math.random() * 3, 'rgb(255,215,0)', 12));
+                            }
+                        }
+                    }
+
+                    this.cameraX = this.player.x - this.canvas.width / 2 + this.player.w / 2;
+                    if (this.cameraX < 0) this.cameraX = 0;
+                    if (this.cameraX > 3200 - this.canvas.width) this.cameraX = 3200 - this.canvas.width;
+                    this.background.update(this.cameraX);
+
+                    for (let enemy of this.enemies) {
+                        if (!enemy.alive) continue;
+                        enemy.update(this.solidObjects);
+                        if (this.player.x + this.player.w > enemy.x && this.player.x < enemy.x + enemy.w &&
+                            this.player.y + this.player.h > enemy.y && this.player.y < enemy.y + enemy.h) {
+                            if (this.player.vy > 0 && this.player.y + this.player.h - this.player.vy <= enemy.y) {
+                                enemy.alive = false;
+                                this.player.vy = -5;
+                                this.score += 100;
+                                this.sound.kill();
+                                if (navigator.vibrate) navigator.vibrate(100);
+                                for (let i = 0; i < 8; i++) {
+                                    this.particles.push(new Particle(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2,
+                                        (Math.random() - 0.5) * 4, (Math.random() - 1) * 3, 'rgb(139,69,19)', 20));
+                                }
+                            } else {
+                                this.player.alive = false;
+                                this.sound.die();
+                                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                                this.showGameOver();
+                                return;
+                            }
+                        }
+                    }
+
+                    for (let b of this.questionBlocks) b.update();
+
+                    for (let coin of this.coins) {
+                        if (coin.collected) continue;
+                        coin.update();
+                        if (this.player.x + this.player.w > coin.x && this.player.x < coin.x + coin.w &&
+                            this.player.y + this.player.h > coin.y && this.player.y < coin.y + coin.h) {
+                            coin.collected = true;
+                            this.score += 50;
+                            this.sound.coin();
+                            if (navigator.vibrate) navigator.vibrate(50);
+                            for (let i = 0; i < 6; i++) {
+                                this.particles.push(new Particle(coin.x + coin.w / 2, coin.y + coin.h / 2,
+                                    (Math.random() - 0.5) * 3, (Math.random() - 1) * 3, 'rgb(255,215,0)', 15));
+                            }
+                        }
+                    }
+
+                    for (let fc of this.flyingCoins) {
+                        fc.update();
+                        if (!fc.collected && this.player.x + this.player.w > fc.x - 8 && this.player.x < fc.x + 8 &&
+                            this.player.y + this.player.h > fc.y - 8 && this.player.y < fc.y + 8) {
+                            fc.collected = true;
+                            this.score += 200;
+                            this.sound.coin();
+                        }
+                    }
+                    this.flyingCoins = this.flyingCoins.filter(fc => !fc.collected && fc.life > 0);
+
+                    if (this.player.x + this.player.w > this.flag.x && this.player.x < this.flag.x + this.flag.w &&
+                        this.player.y + this.player.h > this.flag.y && this.player.y < this.flag.y + this.flag.h) {
+                        this.showWin();
+                        return;
+                    }
+
+                    this.particles = this.particles.filter(p => {
+                        p.update();
+                        return !p.dead;
+                    });
+                }
+
+                draw() {
+                    const ctx = this.ctx,
+                        W = this.canvas.width,
+                        H = this.canvas.height;
+                    ctx.clearRect(0, 0, W, H);
+                    ctx.save();
+                    ctx.translate(-this.cameraX, 0);
+                    this.background.draw(ctx, W, H);
+                    ctx.fillStyle = '#8B4513';
+                    ctx.fillRect(0, 570, 3200, 30);
+                    ctx.fillStyle = '#C0813A';
+                    ctx.strokeStyle = '#5C3317';
+                    ctx.lineWidth = 2;
+                    for (let obj of this.solidObjects) {
+                        if (obj instanceof QuestionBlock) continue;
+                        ctx.fillRect(obj.x, obj.y, obj.w, obj.h);
+                        ctx.strokeRect(obj.x, obj.y, obj.w, obj.h);
+                        ctx.strokeStyle = '#5C3317';
+                        ctx.beginPath();
+                        ctx.moveTo(obj.x, obj.y + obj.h / 2);
+                        ctx.lineTo(obj.x + obj.w, obj.y + obj.h / 2);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(obj.x + obj.w / 2, obj.y);
+                        ctx.lineTo(obj.x + obj.w / 2, obj.y + obj.h / 2);
+                        ctx.stroke();
+                    }
+                    for (let b of this.questionBlocks) b.draw(ctx);
+                    for (let c of this.coins) c.draw(ctx);
+                    for (let fc of this.flyingCoins) fc.draw(ctx);
+                    this.flag.draw(ctx);
+                    for (let e of this.enemies) e.draw(ctx);
+                    if (this.player) this.player.draw(ctx);
+                    for (let p of this.particles) p.draw(ctx);
+                    ctx.restore();
+                    ctx.fillStyle = 'white';
+                    ctx.font = 'bold 20px Arial';
+                    ctx.fillText('Счёт: ' + this.score, 20, 40);
+                    if (this.player && this.player.canDoubleJump && !this.player.hasDoubleJumped) {
+                        ctx.fillText('Двойной прыжок готов!', 20, 70);
+                    }
+                }
+            }
+
+            class GestureHandler {
+                constructor(canvas, player) {
+                    this.canvas = canvas;
+                    this.player = player;
+                    this.startX = this.startY = 0;
+                    this.startTime = 0;
+                    this.isTouching = false;
+                    canvas.addEventListener('touchstart', e => this.onTouchStart(e), {
+                        passive: false
+                    });
+                    canvas.addEventListener('touchmove', e => this.onTouchMove(e), {
+                        passive: false
+                    });
+                    canvas.addEventListener('touchend', e => this.onTouchEnd(e), {
+                        passive: false
+                    });
+                }
+                onTouchStart(e) {
+                    e.preventDefault();
+                    const t = e.touches[0];
+                    this.startX = t.clientX;
+                    this.startY = t.clientY;
+                    this.startTime = Date.now();
+                    this.isTouching = true;
+                }
+                onTouchMove(e) {
+                    e.preventDefault();
+                    if (!this.isTouching || !this.player) return;
+                    const dx = e.touches[0].clientX - this.startX;
+                    this.player.vx = Math.max(-5, Math.min(5, dx * 0.05));
+                }
+                onTouchEnd(e) {
+                    e.preventDefault();
+                    if (!this.isTouching) return;
+                    this.isTouching = false;
+                    const t = e.changedTouches[0];
+                    const dx = t.clientX - this.startX;
+                    const dy = t.clientY - this.startY;
+                    const dt = Date.now() - this.startTime;
+                    if (dy < -40 && dt < 300) {
+                        this.player.jump();
+                        this.player.vx = 0;
+                        return;
+                    }
+                    if (Math.abs(dx) > 20 && dt < 300) {} else {
+                        this.player.vx = 0;
+                    }
+                    if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && dt < 200) this.player.jump();
+                }
+            }
+
+            const game = new MarioGame('gameCanvas');
+            game.loadAssets().then(() => game.showMenu());
+            if (window.location.pathname === '/game') game.startGame(false);
+            else if (window.location.pathname === '/gameover') game.showGameOver();
+            else if (window.location.pathname === '/win') game.showWin();
+        })();
+    </script>
+</body>
+
+</html>
