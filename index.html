@@ -18,12 +18,10 @@
             height: 100%;
             overflow: hidden;
             font-family: 'Segoe UI', Arial, sans-serif;
-            background: #000;
             touch-action: manipulation;
         }
         
         #gameCanvas {
-            display: block;
             position: absolute;
             top: 0;
             left: 0;
@@ -187,11 +185,11 @@
     </div>
 
     <div id="mobileControls" class="hidden">
-        <div class="ctrl-group" id="leftGroup">
+        <div class="ctrl-group">
             <div class="ctrl-btn" id="leftBtn">◀</div>
             <div class="ctrl-btn" id="rightBtn">▶</div>
         </div>
-        <div class="ctrl-group" id="jumpGroup">
+        <div class="ctrl-group">
             <div class="ctrl-btn" id="jumpBtn">▲</div>
         </div>
     </div>
@@ -200,6 +198,9 @@
 
     <script>
         (function() {
+            const VIRTUAL_HEIGHT = 720;
+            const WORLD_WIDTH = 3200;
+
             class SoundManager {
                 constructor() {
                     this.ctx = null;
@@ -389,8 +390,8 @@
                         this.x = 0;
                         this.vx = 0;
                     }
-                    if (this.x + this.w > 3200) {
-                        this.x = 3200 - this.w;
+                    if (this.x + this.w > WORLD_WIDTH) {
+                        this.x = WORLD_WIDTH - this.w;
                     }
                     if (this.y > 600) {
                         this.y = 600;
@@ -543,7 +544,7 @@
                         if (!groundBelow) this.vx *= -1;
                     }
 
-                    if (this.x <= 0 || this.x + this.w >= 3200) this.vx *= -1;
+                    if (this.x <= 0 || this.x + this.w >= WORLD_WIDTH) this.vx *= -1;
 
                     this.walkTimer++;
                     if (this.walkTimer > 8) {
@@ -702,6 +703,8 @@
                     this.flyingCoins = [];
                     this.solidObjects = [];
                     this.questionBlocks = [];
+                    this.scale = 1;
+                    this.virtualWidth = 1280;
                     this.resize();
                     window.addEventListener('resize', () => this.resize());
                     this.keys = {};
@@ -726,6 +729,8 @@
                 resize() {
                     this.canvas.width = window.innerWidth;
                     this.canvas.height = window.innerHeight;
+                    this.scale = this.canvas.height / VIRTUAL_HEIGHT;
+                    this.virtualWidth = this.canvas.width / this.scale;
                 }
 
                 initMobileControls() {
@@ -924,7 +929,7 @@
                     this.player = new Player(100, 450);
                     this.solidObjects = [];
                     this.questionBlocks = [];
-                    this.solidObjects.push(new GameObject(0, 570, 3200, 30, true));
+                    this.solidObjects.push(new GameObject(0, 570, WORLD_WIDTH, 30, true));
                     this.createBrickPlatform(250, 478, 7, [2, 5]);
                     this.createBrickPlatform(550, 448, 5, [1, 3]);
                     this.createBrickPlatform(850, 428, 8, [0, 4, 7]);
@@ -954,8 +959,11 @@
                     this.flyingCoins = [];
                     this.particles = [];
                     this.cameraX = 0;
-                    if (!this.gestureHandler) this.gestureHandler = new GestureHandler(this.canvas, this.player);
-                    else this.gestureHandler.player = this.player;
+                    if (!this.gestureHandler) this.gestureHandler = new GestureHandler(this.canvas, this.player, this);
+                    else {
+                        this.gestureHandler.player = this.player;
+                        this.gestureHandler.game = this;
+                    }
                 }
 
                 gameLoop() {
@@ -992,9 +1000,9 @@
                         }
                     }
 
-                    this.cameraX = this.player.x - this.canvas.width / 2 + this.player.w / 2;
+                    this.cameraX = this.player.x - this.virtualWidth / 2 + this.player.w / 2;
                     if (this.cameraX < 0) this.cameraX = 0;
-                    if (this.cameraX > 3200 - this.canvas.width) this.cameraX = 3200 - this.canvas.width;
+                    if (this.cameraX > WORLD_WIDTH - this.virtualWidth) this.cameraX = WORLD_WIDTH - this.virtualWidth;
                     this.background.update(this.cameraX);
 
                     for (let enemy of this.enemies) {
@@ -1064,15 +1072,14 @@
                 }
 
                 draw() {
-                    const ctx = this.ctx,
-                        W = this.canvas.width,
-                        H = this.canvas.height;
-                    ctx.clearRect(0, 0, W, H);
+                    const ctx = this.ctx;
+                    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                     ctx.save();
+                    ctx.scale(this.scale, this.scale);
                     ctx.translate(-this.cameraX, 0);
-                    this.background.draw(ctx, W, H);
+                    this.background.draw(ctx, this.virtualWidth, VIRTUAL_HEIGHT);
                     ctx.fillStyle = '#8B4513';
-                    ctx.fillRect(0, 570, 3200, 30);
+                    ctx.fillRect(0, 570, WORLD_WIDTH, 30);
                     ctx.fillStyle = '#C0813A';
                     ctx.strokeStyle = '#5C3317';
                     ctx.lineWidth = 2;
@@ -1108,9 +1115,10 @@
             }
 
             class GestureHandler {
-                constructor(canvas, player) {
+                constructor(canvas, player, game) {
                     this.canvas = canvas;
                     this.player = player;
+                    this.game = game;
                     this.startX = this.startY = 0;
                     this.startTime = 0;
                     this.isTouching = false;
@@ -1124,18 +1132,26 @@
                         passive: false
                     });
                 }
+                toVirtual(clientX, clientY) {
+                    return {
+                        x: clientX / this.game.scale,
+                        y: clientY / this.game.scale
+                    };
+                }
                 onTouchStart(e) {
                     e.preventDefault();
                     const t = e.touches[0];
-                    this.startX = t.clientX;
-                    this.startY = t.clientY;
+                    const v = this.toVirtual(t.clientX, t.clientY);
+                    this.startX = v.x;
+                    this.startY = v.y;
                     this.startTime = Date.now();
                     this.isTouching = true;
                 }
                 onTouchMove(e) {
                     e.preventDefault();
                     if (!this.isTouching || !this.player) return;
-                    const dx = e.touches[0].clientX - this.startX;
+                    const v = this.toVirtual(e.touches[0].clientX, e.touches[0].clientY);
+                    const dx = v.x - this.startX;
                     this.player.vx = Math.max(-5, Math.min(5, dx * 0.05));
                 }
                 onTouchEnd(e) {
@@ -1143,8 +1159,9 @@
                     if (!this.isTouching) return;
                     this.isTouching = false;
                     const t = e.changedTouches[0];
-                    const dx = t.clientX - this.startX;
-                    const dy = t.clientY - this.startY;
+                    const v = this.toVirtual(t.clientX, t.clientY);
+                    const dx = v.x - this.startX;
+                    const dy = v.y - this.startY;
                     const dt = Date.now() - this.startTime;
                     if (dy < -40 && dt < 300) {
                         this.player.jump();
